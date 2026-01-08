@@ -6,9 +6,23 @@ import igraph as ig
 import leidenalg
 import time
 from umap.umap_ import find_ab_params, simplicial_set_embedding
+import gc
+import psutil
+import os
 
 
-#latest github upload 27-June-2020
+def get_memory_mb():
+    """Get current memory usage in MB"""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+
+def log_memory_cleanup(location, mem_before, mem_after):
+    """Log memory before and after cleanup"""
+    freed_mb = mem_before - mem_after
+    print(f"[MEMORY] {location}: {mem_before:.1f} MB -> {mem_after:.1f} MB (freed: {freed_mb:.1f} MB)")
+
+
 class PARC:
     def __init__(self, data, true_label=None, dist_std_local=3, jac_std_global='median', keep_all_local_dist='auto',
                  too_big_factor=0.4, small_pop=10, jac_weighted_edges=True, knn=30, n_iter_leiden=5, random_seed=42,
@@ -22,7 +36,7 @@ class PARC:
             else:
                 keep_all_local_dist = False
         if resolution_parameter !=1:
-            partition_type = "RBVP" # Reichardt and Bornholdt’s Potts model. Note that this is the same as ModularityVertexPartition when setting 𝛾 = 1 and normalising by 2m
+            partition_type = "RBVP" # Reichardt and Bornholdt's Potts model. Note that this is the same as ModularityVertexPartition when setting 𝛾 = 1 and normalising by 2m
         self.data = data
         self.true_label = true_label
         self.dist_std_local = dist_std_local   # similar to the jac_std_global parameter. avoid setting local and global pruning to both be below 0.5 as this is very aggresive pruning.
@@ -172,6 +186,14 @@ class PARC:
         neighbor_array, distance_array = hnsw.knn_query(X_data, k=knnbig)
         # print('shapes of neigh and dist array', neighbor_array.shape, distance_array.shape)
         csr_array = self.make_csrmatrix_noselfloop(neighbor_array, distance_array)
+        
+        # MEMORY CLEANUP POINT 1: After CSR creation in too_big
+        mem_before = get_memory_mb()
+        del distance_array
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After distance_array cleanup in run_toobig_subPARC", mem_before, mem_after)
+        
         sources, targets = csr_array.nonzero()
         #mask = np.zeros(len(sources), dtype=bool)
 
@@ -197,11 +219,26 @@ class PARC:
         for ii in strong_locs: new_edgelist.append(edgelist_copy[ii])
         sim_list_new = list(sim_list_array[strong_locs])
 
+        # MEMORY CLEANUP POINT 2: After Jaccard and pruning in too_big
+        mem_before = get_memory_mb()
+        del G, sim_list, edgelist, edgelist_copy, sim_list_array, strong_locs
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After Jaccard cleanup in run_toobig_subPARC", mem_before, mem_after)
+
         if jac_weighted_edges == True:
             G_sim = ig.Graph(n=n_elements, edges=list(new_edgelist), edge_attrs={'weight': sim_list_new})
         else:
             G_sim = ig.Graph(n=n_elements, edges=list(new_edgelist))
         G_sim.simplify(combine_edges='sum')
+        
+        # MEMORY CLEANUP POINT 3: After new graph creation in too_big
+        mem_before = get_memory_mb()
+        del new_edgelist, sim_list_new
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After edgelist cleanup in run_toobig_subPARC", mem_before, mem_after)
+        
         if jac_weighted_edges == True:
             if self.partition_type =='ModularityVP':
                 partition = leidenalg.find_partition(G_sim, leidenalg.ModularityVertexPartition, weights='weight',
@@ -224,6 +261,14 @@ class PARC:
         # print('Q= %.2f' % partition.quality())
         PARC_labels_leiden = np.asarray(partition.membership)
         PARC_labels_leiden = np.reshape(PARC_labels_leiden, (n_elements, 1))
+        
+        # MEMORY CLEANUP POINT 4: After partition in too_big
+        mem_before = get_memory_mb()
+        del G_sim, partition
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After partition cleanup in run_toobig_subPARC", mem_before, mem_after)
+        
         small_pop_list = []
         small_cluster_list = []
         small_pop_exist = False
@@ -293,6 +338,13 @@ class PARC:
                 print('knn struct already exists')
             neighbor_array, distance_array = self.knn_struct.knn_query(X_data, k=knn)
             csr_array = self.make_csrmatrix_noselfloop(neighbor_array, distance_array)
+            
+            # MEMORY CLEANUP POINT 5: After CSR creation in run_subPARC
+            mem_before = get_memory_mb()
+            del distance_array
+            gc.collect()
+            mem_after = get_memory_mb()
+            log_memory_cleanup("After distance_array cleanup in run_subPARC", mem_before, mem_after)
 
         sources, targets = csr_array.nonzero()
 
@@ -319,10 +371,25 @@ class PARC:
         new_edgelist = list(edge_list_copy_array[strong_locs])
         sim_list_new = list(sim_list_array[strong_locs])
 
+        # MEMORY CLEANUP POINT 6: After Jaccard and pruning in run_subPARC
+        mem_before = get_memory_mb()
+        del G, sim_list, edgelist, edgelist_copy, sim_list_array, edge_list_copy_array, strong_locs
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After Jaccard cleanup in run_subPARC", mem_before, mem_after)
+
         G_sim = ig.Graph(n=n_elements, edges=list(new_edgelist), edge_attrs={'weight': sim_list_new})
         # print('average degree of graph is %.1f' % (np.mean(G_sim.degree())))
         G_sim.simplify(combine_edges='sum')  # "first"
         # print('average degree of SIMPLE graph is %.1f' % (np.mean(G_sim.degree())))
+        
+        # MEMORY CLEANUP POINT 7: After new graph creation in run_subPARC
+        mem_before = get_memory_mb()
+        del new_edgelist, sim_list_new
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After edgelist cleanup in run_subPARC", mem_before, mem_after)
+        
         print('commencing community detection')
         if jac_weighted_edges == True:
             start_leiden = time.time()
@@ -350,6 +417,13 @@ class PARC:
         # print('Q= %.1f' % (partition.quality()))
         PARC_labels_leiden = np.asarray(partition.membership)
         PARC_labels_leiden = np.reshape(PARC_labels_leiden, (n_elements, 1))
+        
+        # MEMORY CLEANUP POINT 8: After partition in run_subPARC
+        mem_before = get_memory_mb()
+        del G_sim, partition
+        gc.collect()
+        mem_after = get_memory_mb()
+        log_memory_cleanup("After partition cleanup in run_subPARC", mem_before, mem_after)
 
         too_big = False
 
@@ -381,6 +455,14 @@ class PARC:
             for j in cluster_big_loc:
                 PARC_labels_leiden[j] = PARC_labels_leiden_big[jj]
                 jj = jj + 1
+            
+            # MEMORY CLEANUP POINT 9: After too_big iteration
+            mem_before = get_memory_mb()
+            del X_data_big, PARC_labels_leiden_big
+            gc.collect()
+            mem_after = get_memory_mb()
+            log_memory_cleanup("After too_big cluster expansion", mem_before, mem_after)
+            
             dummy, PARC_labels_leiden = np.unique(list(PARC_labels_leiden.flatten()), return_inverse=True)
             print('new set of labels ', set(PARC_labels_leiden))
             too_big = False
