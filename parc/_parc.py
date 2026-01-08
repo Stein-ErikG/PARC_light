@@ -203,9 +203,9 @@ class PARC:
         #csr_array.eliminate_zeros()
         #sources, targets = csr_array.nonzero()
         edgelist = list(zip(sources.tolist(), targets.tolist()))
-        edgelist_copy = edgelist.copy()
+        #edgelist_copy = edgelist.copy()
         G = ig.Graph(edgelist, edge_attrs={'weight': csr_array.data.tolist()})
-        sim_list = G.similarity_jaccard(pairs=edgelist_copy)  # list of jaccard weights
+        sim_list = G.similarity_jaccard(pairs=edgelist)  # list of jaccard weights
         new_edgelist = []
         sim_list_array = np.asarray(sim_list)
         if jac_std_toobig == 'median':
@@ -216,12 +216,12 @@ class PARC:
         print('jac std %.3f' % np.std(sim_list))
         print('jac mean %.3f' % np.mean(sim_list))
         strong_locs = np.where(sim_list_array > threshold)[0]
-        for ii in strong_locs: new_edgelist.append(edgelist_copy[ii])
+        for ii in strong_locs: new_edgelist.append(edgelist[ii])
         sim_list_new = list(sim_list_array[strong_locs])
 
         # MEMORY CLEANUP POINT 2: After Jaccard and pruning in too_big
         mem_before = get_memory_mb()
-        del G, sim_list, edgelist, edgelist_copy, sim_list_array, strong_locs
+        del G, sim_list, edgelist, sim_list_array, strong_locs
         gc.collect()
         mem_after = get_memory_mb()
         log_memory_cleanup("After Jaccard cleanup in run_toobig_subPARC", mem_before, mem_after)
@@ -350,17 +350,17 @@ class PARC:
 
         edgelist = list(zip(sources, targets))
 
-        edgelist_copy = edgelist.copy()
+        #edgelist_copy = edgelist.copy()
 
         G = ig.Graph(edgelist, edge_attrs={'weight': csr_array.data.tolist()})
         # print('average degree of prejacard graph is %.1f'% (np.mean(G.degree())))
         # print('computing Jaccard metric')
-        sim_list = G.similarity_jaccard(pairs=edgelist_copy)
+        sim_list = G.similarity_jaccard(pairs=edgelist)
 
         print('commencing global pruning')
 
         sim_list_array = np.asarray(sim_list)
-        edge_list_copy_array = np.asarray(edgelist_copy)
+        edge_list_copy_array = np.asarray(edgelist)
 
         if jac_std_global == 'median':
             threshold = np.median(sim_list)
@@ -373,7 +373,7 @@ class PARC:
 
         # MEMORY CLEANUP POINT 6: After Jaccard and pruning in run_subPARC
         mem_before = get_memory_mb()
-        del G, sim_list, edgelist, edgelist_copy, sim_list_array, edge_list_copy_array, strong_locs
+        del G, sim_list, edgelist, sim_list_array, edge_list_copy_array, strong_locs
         gc.collect()
         mem_after = get_memory_mb()
         log_memory_cleanup("After Jaccard cleanup in run_subPARC", mem_before, mem_after)
